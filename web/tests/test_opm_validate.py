@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
@@ -355,38 +354,47 @@ def test_duplicate_relation_warns(caplog):
 
 
 @pytest.fixture()
-def client() -> Generator:
+def _test_engine():
+    from sqlalchemy import create_engine as _create_engine
+    from sqlalchemy.pool import StaticPool
+    test_engine = _create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with patch("web.app.db.engine", test_engine):
+        import web.app.db as db_module
+        db_module.init_db()
+        yield test_engine
+
+
+@pytest.fixture()
+def client(_test_engine) -> Generator:
     sys.modules.setdefault("ollama", MagicMock())
     from fastapi.testclient import TestClient
     from web.app.main import app
 
-    with patch(
-        "web.app.services.opm_extract.call_llm", side_effect=fake_opm_llm_success
-    ):
-        with TestClient(app) as c:
-            yield c
+    with patch("web.app.db.engine", _test_engine):
+        with patch(
+            "web.app.services.opm_extract.call_llm", side_effect=fake_opm_llm_success
+        ):
+            with TestClient(app) as c:
+                yield c
 
 
-def test_valid_stub_passes_validation_and_stores(client, tmp_path):
-    with patch("web.app.db.DB_PATH", tmp_path / "test.db"):
-        from web.app import db as db_module
-        db_module.init_db()
-        response = client.post("/opm/extract", json={"text": "some text", "save_note": False})
+def test_valid_stub_passes_validation_and_stores(client):
+    response = client.post("/opm/extract", json={"text": "some text", "save_note": False})
     assert response.status_code == 200
     data = response.json()
     assert data["diagram"]["version"] == "1.0"
 
 
-def test_invalid_diagram_blocked_before_db_insert(client, tmp_path, monkeypatch):
+def test_invalid_diagram_blocked_before_db_insert(client, monkeypatch):
     """An invalid dict from extraction must be rejected with 422, not stored."""
     bad_diagram = {"version": "1.0", "nodes": [{"id": "BadID", "kind": "object", "label": "X"}], "links": []}
-    # Patch the name as imported in the router module
     monkeypatch.setattr("web.app.services.opm_extract.extract_opm_diagram", lambda text: bad_diagram)
 
-    with patch("web.app.db.DB_PATH", tmp_path / "test.db"):
-        from web.app import db as db_module
-        db_module.init_db()
-        response = client.post("/opm/extract", json={"text": "some text", "save_note": False})
+    response = client.post("/opm/extract", json={"text": "some text", "save_note": False})
 
     assert response.status_code == 422
     body = response.json()
@@ -394,15 +402,13 @@ def test_invalid_diagram_blocked_before_db_insert(client, tmp_path, monkeypatch)
     assert body["detail"]["error"] == "opm_extraction_failed"
 
 
-def test_invalid_diagram_not_persisted(client, tmp_path, monkeypatch):
+def test_invalid_diagram_not_persisted(client, _test_engine, monkeypatch):
     """After a validation failure, no row should appear in opm_diagrams."""
     bad_diagram = {"version": "1.0", "nodes": [{"id": "Bad", "kind": "object", "label": "X"}], "links": []}
     monkeypatch.setattr("web.app.services.opm_extract.extract_opm_diagram", lambda text: bad_diagram)
 
-    with patch("web.app.db.DB_PATH", tmp_path / "test.db"):
-        from web.app import db as db_module
-        db_module.init_db()
-        client.post("/opm/extract", json={"text": "some text", "save_note": False})
-        diagrams = db_module.list_opm_diagrams()
+    client.post("/opm/extract", json={"text": "some text", "save_note": False})
 
+    import web.app.db as db_module
+    diagrams = db_module.list_opm_diagrams()
     assert diagrams == []
