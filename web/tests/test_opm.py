@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
@@ -236,12 +235,18 @@ def test_version_preserved_in_round_trip():
 
 
 @pytest.fixture()
-def tmp_db(tmp_path: Path) -> Generator[Path, None, None]:
-    db_file = tmp_path / "test.db"
-    with patch("web.app.db.DB_PATH", db_file):
-        from web.app import db as db_module
+def tmp_db():
+    from sqlalchemy import create_engine as _create_engine
+    from sqlalchemy.pool import StaticPool
+    test_engine = _create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with patch("web.app.db.engine", test_engine):
+        import web.app.db as db_module
         db_module.init_db()
-        yield db_file
+        yield test_engine
 
 
 # ---------------------------------------------------------------------------
@@ -249,14 +254,14 @@ def tmp_db(tmp_path: Path) -> Generator[Path, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def test_insert_opm_diagram_returns_int(tmp_db: Path):
+def test_insert_opm_diagram_returns_int(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [], "links": []}
     diagram_id = db_module.insert_opm_diagram(payload)
     assert isinstance(diagram_id, int)
 
 
-def test_insert_opm_diagram_multiple_distinct_ids(tmp_db: Path):
+def test_insert_opm_diagram_multiple_distinct_ids(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [], "links": []}
     id1 = db_module.insert_opm_diagram(payload)
@@ -264,7 +269,7 @@ def test_insert_opm_diagram_multiple_distinct_ids(tmp_db: Path):
     assert id1 != id2
 
 
-def test_get_opm_diagram_returns_parsed_dict(tmp_db: Path):
+def test_get_opm_diagram_returns_parsed_dict(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [{"id": "x"}], "links": []}
     diagram_id = db_module.insert_opm_diagram(payload)
@@ -274,12 +279,12 @@ def test_get_opm_diagram_returns_parsed_dict(tmp_db: Path):
     assert row["diagram"]["version"] == "1.0"
 
 
-def test_get_opm_diagram_not_found_returns_none(tmp_db: Path):
+def test_get_opm_diagram_not_found_returns_none(tmp_db):
     from web.app import db as db_module
     assert db_module.get_opm_diagram(99999) is None
 
 
-def test_note_id_null_when_not_provided(tmp_db: Path):
+def test_note_id_null_when_not_provided(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [], "links": []}
     diagram_id = db_module.insert_opm_diagram(payload)
@@ -288,7 +293,7 @@ def test_note_id_null_when_not_provided(tmp_db: Path):
     assert row["note_id"] is None
 
 
-def test_list_opm_diagrams_returns_all(tmp_db: Path):
+def test_list_opm_diagrams_returns_all(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [], "links": []}
     db_module.insert_opm_diagram(payload)
@@ -297,7 +302,7 @@ def test_list_opm_diagrams_returns_all(tmp_db: Path):
     assert len(diagrams) == 2
 
 
-def test_stored_payload_matches_inserted(tmp_db: Path):
+def test_stored_payload_matches_inserted(tmp_db):
     from web.app import db as db_module
     payload = {"version": "1.0", "nodes": [{"id": "n1"}], "links": []}
     diagram_id = db_module.insert_opm_diagram(payload)
@@ -312,23 +317,19 @@ def test_stored_payload_matches_inserted(tmp_db: Path):
 
 
 @pytest.fixture()
-def client(tmp_db: Path) -> Generator[TestClient, None, None]:
-    # ollama is not installed in this environment; stub it so the app can be imported
+def client(tmp_db) -> Generator[TestClient, None, None]:
     sys.modules.setdefault("ollama", MagicMock())
-    # Remove cached app import so the patched DB_PATH takes effect
-    for mod in list(sys.modules):
-        if mod.startswith("web.app"):
-            del sys.modules[mod]
     from web.app.main import app
 
-    with patch(
-        "web.app.services.opm_extract.call_llm", side_effect=fake_opm_llm_success
-    ):
-        with TestClient(app) as c:
-            yield c
+    with patch("web.app.db.engine", tmp_db):
+        with patch(
+            "web.app.services.opm_extract.call_llm", side_effect=fake_opm_llm_success
+        ):
+            with TestClient(app) as c:
+                yield c
 
 
-def test_post_extract_inserts_row(client: TestClient, tmp_db: Path):
+def test_post_extract_inserts_row(client: TestClient, tmp_db):
     from web.app import db as db_module
     response = client.post("/opm/extract", json={"text": "some text", "save_note": False})
     assert response.status_code == 200

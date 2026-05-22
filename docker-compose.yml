@@ -1,27 +1,20 @@
-# VM / server deploy for OPM web app (testcase.md). Do not commit secrets.
-# Usage:
-#   export OPM_MODEL=your-model
-#   export OPENAI_API_KEY=your-key
-#   docker compose -f docker-compose.web.yml up -d --build
-#
-# SQLite persists in Docker volume `opm_web_data`. UI: http://HOST:8000/
-
 services:
-  opm-web:
+  web:
     build:
       context: .
       dockerfile: Dockerfile.web
     ports:
-      - "8000:8000"
+      - "3000:8000"
     environment:
       WEB_DATA_DIR: /data
+      DEPLOY_TYPE: ${DEPLOY_TYPE:-DEV}
       OPM_MODEL: ${OPM_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPM_OPENAI_EXTRA_HEADERS: ${OPM_OPENAI_EXTRA_HEADERS:-}
       OPM_TOP_P: ${OPM_TOP_P:-}
     volumes:
-      - opm_web_data:/data
+      - web_data:/data
 
 volumes:
-  opm_web_data:
+  web_data:
