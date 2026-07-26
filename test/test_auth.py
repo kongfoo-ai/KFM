@@ -13,7 +13,7 @@ load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN", "")
 
 # Base URL for the API
-BASE_URL = "http://localhost:8000"
+BASE_URL = os.getenv("API_BASE_URL", "http://localhost:6006")
 
 
 @pytest.fixture

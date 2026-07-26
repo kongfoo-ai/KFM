@@ -28,8 +28,10 @@ streamlit==1.37.0
 # gradio==4.4.0
 fastapi
 fastmcp
+vllm
 # chromadb==0.4.15
 pandas
+openpyxl
 openai
 python-dotenv==1.0.0
 # tensorrt>=8.6.1

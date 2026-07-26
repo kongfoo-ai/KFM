@@ -13,3 +13,7 @@
 ./kongfoo
 local
 .env
+deepseek-ai
+*.xlsx
+api.log
+api.pid
